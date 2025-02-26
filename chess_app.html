@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Online Chess</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/chessboard-js/1.0.0/chessboard-1.0.0.min.css">
+    <style>
+        body { font-family: 'Arial', sans-serif; }
+        .container { display: flex; gap: 30px; padding: 30px; justify-content: center; }
+        .sidebar { display: flex; flex-direction: column; gap: 15px; width: 350px; }
+        #status { background-color: #f0f0f0; padding: 10px; border-radius: 5px; text-align: center; font-weight: bold; font-size: 1.1em; }
+        #chat { height: 250px; overflow-y: auto; border: 1px solid #ccc; padding: 10px; border-radius: 5px; background-color: #fff; }
+        #chatInput { width: calc(100% - 22px); padding: 8px; margin-right: 5px; border-radius: 3px; border: 1px solid #ccc; }
+        .chat-controls { display: flex; }
+        button { padding: 10px 15px; cursor: pointer; border: none; border-radius: 5px; color: white; background-color: #5cb85c; }
+        button:hover { background-color: #4cae4c; }
+        button#resign { background-color: #d9534f; }
+        button#resign:hover { background-color: #c9302c; }
+        #moveList { height: 150px; overflow-y: auto; border: 1px solid #ccc; padding: 10px; border-radius: 5px; background-color: #f9f9f9; font-family: monospace; font-size: 0.9em; }
+
+        /* Board Theme: Wood */
+        #board {
+            border: 2px solid #8b4513; /* Dark brown border */
+            box-shadow: 0 4px 8px rgba(0,0,0,0.2); /* Optional: shadow for depth */
+        }
+        .square-55d63 {
+            width: 50px; /* Adjust as needed */
+            height: 50px;
+            font-size: 12px;
+            color: #555; /* Coordinate text color */
+        }
+        .square-55d63.even {
+            background-color: #f0d9b5; /* Light wood color */
+        }
+        .square-55d63.odd {
+            background-color: #b58863; /* Dark wood color */
+        }
+
+        /* Highlighting */
+        .square-55d63.highlight-possible {
+            background-color: rgba(255, 255, 0, 0.7); /* Yellow for possible moves */
+        }
+        .square-55d63.highlight-last-move {
+            background-color: rgba(144, 238, 144, 0.8); /* Light Green for last move */
+        }
+        .highlight-piece {
+            box-shadow: 0 0 5px 3px rgba(255, 255, 0, 0.8); /* Highlight for selected piece */
+            border-radius: 5px; /* Optional: round the highlight */
+        }
+
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div id="board"></div>
+        <div class="sidebar">
+            <div id="status"></div>
+            <div id="chat"></div>
+            <div class="chat-controls">
+                <input id="chatInput" type="text" placeholder="Type a message...">
+                <button id="sendChat">Send</button>
+            </div>
+            <div id="moveList"></div>
+            <button id="newGame">New Game</button>
+            <button id="resign">Resign</button>
+        </div>
+    </div>
+
+    <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-auth.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-database.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.12.0/chess.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/chessboard-js/1.0.0/chessboard-1.0.0.min.js"></script>
+
+    <script>
+        // Firebase Configuration (Replace with your own)
+        const firebaseConfig = {
+            apiKey: "AIzaSyDftAr84pYcnzoZWVgNEn8uc3hvUGkG8iA",
+            authDomain: "chess-game-c709c.firebaseapp.com",
+            databaseURL: "https://chess-game-c709c-default-rtdb.firebaseio.com",
+            projectId: "chess-game-c709c",
+            storageBucket: "chess-game-c709c.firebasestorage.app",
+            messagingSenderId: "1056873096688",
+            appId: "1:1056873096688:web:02248f62d487674c5d6935",
+            measurementId: "G-7MQBY4TYWX"
+            };
+        firebase.initializeApp(firebaseConfig);
+        const database = firebase.database();
+
+        // Chess and Board Setup
+        const game = new Chess();
+        let playerColor = null;
+        let selectedSquare = null;
+        let lastMove = null; // To track last move
+        const board = Chessboard('board', {
+            draggable: true, // Enable drag and drop moves
+            position: 'start',
+            showNotation: true,
+            pieceTheme: 'https://chessboardjs.com/img/chesspieces/wikipedia/{piece}.png',
+            onDragStart: onDragStart,
+            onDrop: onDrop,
+            onMouseoutSquare: onMouseoutSquare,
+            onMouseoverSquare: onMouseoverSquare,
+            onSnapEnd: onSnapEnd
+        });
+
+        // Get Game ID from URL
+        const urlParams = new URLSearchParams(window.location.search);
+        const gameId = urlParams.get('gameId');
+        if (!gameId) {
+            alert('No game ID provided. Please use a URL like ?gameId=abc123');
+            throw new Error('No game ID');
+        }
+        const gameRef = database.ref(`games/${gameId}`);
+
+        // Authenticate and Assign Player
+        firebase.auth().signInAnonymously().then((user) => {
+            const userId = user.user.uid;
+            gameRef.get().then((snapshot) => {
+                if (!snapshot.exists()) {
+                    gameRef.set({
+                        fen: game.fen(),
+                        turn: 'w',
+                        moves: [],
+                        players: { white: userId, black: null },
+                        chat: []
+                    });
+                    playerColor = 'w';
+                } else {
+                    const data = snapshot.val();
+                    if (!data.players.black) {
+                        gameRef.child('players/black').set(userId);
+                        playerColor = 'b';
+                    } else if (data.players.white === userId) {
+                        playerColor = 'w';
+                    } else if (data.players.black === userId) {
+                        playerColor = 'b';
+                    } else {
+                        alert('Game is full.');
+                        return;
+                    }
+                }
+                setupGame();
+            });
+        });
+
+        // Game Setup
+        function setupGame() {
+            gameRef.child('fen').on('value', (snapshot) => {
+                const fen = snapshot.val();
+                game.load(fen);
+                board.position(fen);
+                updateStatus();
+                updateMoveList(); // Update move list on board update
+                removeHighlights(); // Clear highlights on new board state
+                if (lastMove) {
+                    highlightLastMove(lastMove); // Re-highlight last move if available
+                }
+            });
+            gameRef.child('chat').on('child_added', (snapshot) => {
+                const msg = snapshot.val();
+                const chatDiv = document.getElementById('chat');
+                const msgEl = document.createElement('div');
+                msgEl.textContent = `${msg.sender}: ${msg.text}`;
+                chatDiv.appendChild(msgEl);
+                chatDiv.scrollTop = chatDiv.scrollHeight;
+            });
+            gameRef.child('winner').on('value', (snapshot) => {
+                const winner = snapshot.val();
+                if (winner) {
+                    alert(`${winner === 'w' ? 'White' : winner === 'b' ? 'Black' : 'Draw'} wins${winner === 'draw' ? '!' : ' by resignation or checkmate!'}`);
+                }
+            });
+        }
+
+        // --- Move Handling with Drag and Drop ---
+        function onDragStart (source, piece, position, orientation) {
+            if (game.turn() !== playerColor || piece.charAt(0) !== playerColor) {
+                return false; // Don't allow piece to be dragged if it's not the player's turn or piece color
+            }
+            highlightPossibleMoves(source); // Highlight possible moves on drag start
+            return true;
+        };
+
+        function onDrop (source, target) {
+            removeHighlights(); // Clear possible move highlights
+
+            // see if the move is legal
+            var move = game.move({
+                from: source,
+                to: target,
+                promotion: 'q' // NOTE: always promote to a queen for example simplicity
+            });
+
+            // illegal move
+            if (move === null) return 'snapback';
+
+            lastMove = { from: source, to: target }; // Store last move
+            gameRef.child('fen').set(game.fen());
+            gameRef.child('turn').set(game.turn());
+            updateStatus();
+            updateMoveList();
+            highlightLastMove(lastMove); // Highlight the move just played
+        };
+
+        // --- Square Highlighting on Hover ---
+        function onMouseoverSquare (square, piece) {
+            if (piece && piece.charAt(0) === playerColor && game.turn() === playerColor) {
+                highlightPossibleMoves(square);
+                highlightPiece(square); // Highlight the piece on mouseover
+            }
+        };
+
+        function onMouseoutSquare (square, piece) {
+            removeHighlights();
+            if (selectedSquare) {
+                highlightPossibleMoves(selectedSquare); // Re-highlight if a square is selected
+                highlightPiece(selectedSquare);
+            }
+            if (lastMove) {
+                highlightLastMove(lastMove); // Re-highlight last move
+            }
+        };
+
+        function onSnapEnd () {
+          board.position(game.fen()); // Update board position after move is snapped
+        };
+
+
+        // --- Highlighting Functions ---
+        function highlightPossibleMoves(square) {
+            const possibleMoves = game.moves({ square: square, verbose: true });
+
+            // exit if there are no moves available for this square
+            if (possibleMoves.length === 0) return;
+
+            // highlight the square they moused over
+            greySquare(square); // Consider a different style for square hover
+
+            // highlight the possible squares for this piece
+            for (var i = 0; i < possibleMoves.length; i++) {
+                greySquare(possibleMoves[i].to); // Use greySquare for possible moves as well, or create a new style
+                document.querySelector(`.square-${possibleMoves[i].to}`).classList.add('highlight-possible');
+            }
+        };
+
+        function highlightLastMove(move) {
+            if (move) {
+                document.querySelector(`.square-${move.from}`).classList.add('highlight-last-move');
+                document.querySelector(`.square-${move.to}`).classList.add('highlight-last-move');
+            }
+        }
+
+        function highlightPiece(square) {
+            document.querySelector(`.square-${square}`).classList.add('highlight-piece');
+            selectedSquare = square; // Update selected square on piece highlight
+        }
+
+
+        function removeHighlights() {
+            document.querySelectorAll('.square-55d63').forEach(square => {
+                square.classList.remove('highlight-possible');
+                square.classList.remove('highlight-last-move');
+                square.classList.remove('highlight-piece');
+            });
+            selectedSquare = null; // Clear selected square when highlights are removed
+        };
+
+
+        const greySquareEl = document.createElement('div');
+        greySquareEl.classList.add('square-55d63', 'grey');
+        greySquareEl.style.background = 'rgba(0, 0, 0, 0.5)'; // Grey background
+        function greySquare (square) {
+          const squareEl = document.querySelector(`.square-${square}`);
+
+          // Check if the grey square element already exists in the square
+          if (!squareEl.querySelector('.square-55d63.grey')) {
+            squareEl.appendChild(greySquareEl.cloneNode(true));
+          }
+        };
+
+
+        // Status Update
+        function updateStatus() {
+            const statusDiv = document.getElementById('status');
+            let status = `${game.turn() === 'w' ? 'White' : 'Black'}’s turn`;
+            if (game.in_check()) status += ', in check';
+            if (game.in_checkmate()) {
+                status = `Checkmate! ${game.turn() === 'w' ? 'Black' : 'White'} wins!`; // Corrected win message
+                gameRef.child('winner').set(game.turn() === 'w' ? 'b' : 'w');
+            } else if (game.in_draw()) {
+                status = 'Draw!';
+                gameRef.child('winner').set('draw');
+            }
+            statusDiv.textContent = status;
+        }
+
+        // Move List Update
+        function updateMoveList() {
+            const moveListDiv = document.getElementById('moveList');
+            const history = game.history();
+            moveListDiv.textContent = history.join(" "); // Display moves separated by spaces
+        }
+
+
+        // Chat
+        document.getElementById('sendChat').addEventListener('click', () => {
+            const input = document.getElementById('chatInput');
+            const text = input.value.trim();
+            if (text) {
+                gameRef.child('chat').push({
+                    sender: playerColor === 'w' ? 'White' : 'Black',
+                    text,
+                    timestamp: firebase.database.ServerValue.TIMESTAMP
+                });
+                input.value = '';
+            }
+        });
+
+        // New Game
+        document.getElementById('newGame').addEventListener('click', () => {
+            gameRef.update({
+                fen: 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1',
+                turn: 'w',
+                moves: [],
+                winner: null
+            });
+            lastMove = null; // Clear last move on new game
+        });
+
+        // Resign with Confirmation
+        document.getElementById('resign').addEventListener('click', () => {
+            if (confirm('Are you sure you want to resign?')) {
+                gameRef.child('winner').set(playerColor === 'w' ? 'b' : 'w');
+            }
+        });
+    </script>
+</body>
+</html>
