@@ -1,2 +1,0 @@
-# Khelega-Chess
-meri marzi
