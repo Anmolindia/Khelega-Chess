@@ -67,9 +67,9 @@
         </div>
     </div>
 
-    <script type="module" src="https://www.gstatic.com/firebasejs/9.6.1/firebase-app.js"></script>
-    <script type="module" src="https://www.gstatic.com/firebasejs/9.6.1/firebase-auth.js"></script>
-    <script type="module" src="https://www.gstatic.com/firebasejs/9.6.1/firebase-database.js"></script>
+    <script type="module" src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js"></script>
+    <script type="module" src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js"></script>
+    <script type="module" src="https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js"></script>
 
     <script type="module">
         // Firebase Configuration
@@ -84,10 +84,12 @@
             measurementId: "G-7MQBY4TYWX"
         };
 
+        console.log("Before initializeApp"); // ADDED: Checkpoint before initialization
         firebase.initializeApp(firebaseConfig);
         console.log("Firebase initialized:", firebase); // Check if Firebase is initialized
 
         const database = firebase.database(); // Initialize database
+        console.log("Database initialized:", database); // ADDED: Check database init
 
         // Chess and Board Setup
         const game = new Chess();
@@ -114,10 +116,12 @@
             throw new Error('No game ID');
         }
         const gameRef = database.ref(`games/${gameId}`);
+        console.log("GameRef initialized:", gameRef); // ADDED: Check gameRef init
 
         // Authenticate and Assign Player
         firebase.auth().signInAnonymously().then((user) => {
             const userId = user.user.uid;
+            console.log("Anonymous user signed in:", userId); // ADDED: Check auth
             gameRef.get().then((snapshot) => {
                 if (!snapshot.exists()) {
                     gameRef.set({
@@ -144,6 +148,8 @@
                 }
                 setupGame();
             });
+        }).catch(error => {
+            console.error("Firebase auth error:", error); // ADDED: Catch auth errors
         });
 
         // Game Setup
