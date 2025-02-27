@@ -88,7 +88,8 @@
        measurementId: "G-7MQBY4TYWX"
        };
         firebase.initializeApp(firebaseConfig);
-        const database = firebase.database();
+        console.log("Firebase initialized:", firebase); // ADD THIS LINE
+
 
         // Chess and Board Setup
         const game = new Chess();
